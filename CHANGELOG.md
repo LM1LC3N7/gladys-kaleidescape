@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-22
+
 ### Added
 
 - Kaleidescape movie players over their local control protocol (TCP 10000),
@@ -48,4 +50,5 @@ the notes of the version's GitHub Release.
   prototype; only serial numbers are keys in `/data`, nothing of what plays
   is stored.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-kaleidescape/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-kaleidescape/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-kaleidescape/releases/tag/v0.1.1

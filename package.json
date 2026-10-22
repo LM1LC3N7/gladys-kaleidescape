@@ -1,6 +1,6 @@
 {
   "name": "gladys-kaleidescape",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for Kaleidescape movie players (power on, standby, play, pause, stop, title, chapter, video format), over their local control protocol (TCP 10000). Unofficial, not affiliated with Kaleidescape.",
   "type": "module",
