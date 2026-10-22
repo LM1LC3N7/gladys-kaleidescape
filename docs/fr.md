@@ -1,67 +1,112 @@
-# Template de démonstration
+# Kaleidescape pour Gladys
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Pilotez vos lecteurs de films **Kaleidescape** (Strato, Compact Terra
+Prevue, Alto, Cinema One, M-Class) depuis Gladys, en local, sans aucun
+cloud : allumage, veille, lecture, pause, arrêt, touches de télécommande,
+état de lecture, titre, chapitre, position dans le film et format vidéo.
+
+> **Important.** Cette intégration n'a jamais été testée avec un vrai
+> appareil : elle a été écrite d'après la bibliothèque `pykaleidescape`
+> (celle de Home Assistant) et testée avec un faux lecteur seulement. Vos
+> retours sont les bienvenus.
+> Intégration non officielle, sans lien avec Kaleidescape.
+
+## Installation
+
+1. Donnez au lecteur une **adresse IP fixe** dans votre box (bail DHCP
+   réservé).
+2. Dans Gladys, installez l'intégration **Kaleidescape**, ouvrez sa
+   configuration et saisissez les adresses IP des lecteurs, séparées par des
+   virgules (par exemple `192.168.1.60` ; port 10000 par défaut, un autre
+   sous la forme `192.168.1.60:10001`).
+3. Les lecteurs apparaissent dans l'onglet **Découverte** : créez-les.
+
+Le protocole de contrôle n'a pas de mot de passe : rien d'autre à saisir.
+Un serveur sans zone de film (Terra, 1U, 3U) n'est pas proposé.
 
 ## Ce que vous obtenez
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+| Fonction              | Type Gladys                  | Remarque                                                               |
+| --------------------- | ---------------------------- | ---------------------------------------------------------------------- |
+| Marche                | état binaire (lecture seule) | 1 allumé, 0 veille ou injoignable                                      |
+| État de marche        | texte (lecture seule)        | en anglais : On, Standby, Not reachable                                |
+| Allumer               | bouton                       | envoyé seulement en veille                                             |
+| Veille                | bouton                       | envoyé seulement allumé ; jamais bloqué                                |
+| Lecture               | bouton                       | envoyé seulement allumé                                                |
+| Pause, Arrêt          | boutons                      | envoyés seulement si un film est en cours ; jamais bloqués             |
+| Touche                | liste                        | flèches, OK, Retour, menu, chapitre suivant / précédent…               |
+| En lecture            | état binaire (lecture seule) | 1 pendant la lecture (ou l'avance / le retour rapide)                  |
+| État de lecture       | texte (lecture seule)        | Idle, Paused, Playing, Fast forward, Rewind                            |
+| Titre                 | texte (lecture seule)        | le titre en cours, « No title » sans lecture                           |
+| Chapitre              | nombre (lecture seule)       | 0 sans lecture                                                         |
+| Position dans le film | texte (lecture seule)        | None, Content, Intermission (entracte), Credits (générique), Disc menu |
+| Mode vidéo            | texte (lecture seule)        | par exemple `3840x2160p24 16:9`                                        |
+| Plage dynamique       | texte (lecture seule)        | SDR, HDR, HDR10 (PQ), Unknown                                          |
 
-## Configuration
+Volontairement, aucun **interrupteur** : un « éteins tout » ou « allume
+tout » d'un assistant vocal ou d'une scène n'atteint jamais votre lecteur.
+Utilisez les boutons dans vos scènes. Exemple : baisser les lumières quand
+« En lecture » passe à 1, les rallumer quand « Position dans le film »
+devient « Credits ».
 
-1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température. L'**intervalle de rafraîchissement** règle la fréquence
-   de lecture de la station météo et de la puissance de la prise : toutes
-   les 5 minutes par défaut, toutes les minutes au plus.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+## Commandes
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+L'état du lecteur (son numéro de série, sa marche, son état de lecture) est
+relu juste avant chaque commande. Si un autre lecteur répond à l'adresse,
+rien n'est envoyé et l'adresse est oubliée ; un numéro de série illisible ne
+compte pas comme un autre lecteur.
 
-## Actions
+- **Allumer** n'est envoyé qu'en veille ; **Lecture** et les **touches**
+  seulement lecteur allumé (sinon : refusé, rien n'est envoyé). Ces
+  commandes passent une à une.
+- **Veille**, **Pause** et **Arrêt** protègent : elles ne font jamais la
+  queue, ne sont jamais refusées faute d'avoir pu lire l'état (elles sont
+  alors envoyées quand même), et annulent les commandes Allumer, Lecture ou
+  touche encore en attente (« Cancelled by …, nothing sent »).
+- Une commande n'est annoncée réussie que si l'état relu ensuite est celui
+  demandé (marche, lecture, pause, arrêt) ; une touche, que si le lecteur
+  l'accepte. Sinon : « Sent, without confirmation from the player »
+  (envoyée, sans confirmation). Une commande qui n'a pas pu partir est
+  signalée « nothing sent » (rien envoyé), un refus du lecteur « refused by
+  the player ».
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+Chaque commande reçoit une réponse en moins de 4 secondes (Gladys attend 5
+secondes) ; elle ne part jamais après son échéance.
 
-## Scènes
+## Bouton de la configuration
 
-L'intégration ajoute ses propres cartes à l'éditeur de scènes (Gladys 5.1
-ou plus récent), dans la catégorie **Intégrations** :
+- **Vérifier les lecteurs** : donne l'état connu de chaque lecteur et de
+  chaque adresse saisie, avec l'âge de la dernière lecture. Il ne relit un
+  lecteur que si son intervalle est écoulé.
 
-- **Mouvement détecté** (déclencheur) — lance la scène quand un détecteur
-  de démonstration voit bouger quelque chose. Choisissez éventuellement le
-  détecteur et ce qui a bougé (personne, animal) ; laissés vides, toute
-  détection correspond. Les actions suivantes peuvent lire ce qui a bougé
-  avec `{{triggerEvent.data.target}}`.
-- **Identifier un appareil** (action) — fait se signaler l'appareil choisi.
-  Elle indique si l'appareil a pu se signaler, pour que les actions
-  suivantes puissent en dépendre.
+## Rafraîchissement, statut et limites
 
-## Tableau de bord
+- L'état de chaque lecteur est lu toutes les 15 secondes par défaut (10 à
+  300), en une courte connexion. Jamais plus souvent : ni la reconnexion à
+  Gladys, ni l'enregistrement de la configuration, ni le bouton, ni la
+  création de l'appareil, ni un redémarrage ne relancent une lecture plus
+  tôt (l'heure de la dernière lecture est gardée dans le dossier de données).
+- Une adresse où aucun lecteur n'est encore identifié est relue chaque
+  minute au plus.
+- Un lecteur qui ne répond pas affiche la marche à 0 et « Not reachable »,
+  et est cité dans le statut de l'intégration.
+- Le titre, le chapitre et le format vidéo sont lus à chaque
+  rafraîchissement : une scène réagit avec ce délai (pas encore
+  d'événements en temps réel).
 
-Ajoutez le widget **État de la démo** à un tableau de bord : il affiche en
-direct la température de la station météo et la puissance de la prise du
-bureau, la connexion utilisée par la prise (en orange si dégradée) et la
-position observée. Son bouton **Identifier la lampe** fait se signaler la
-lampe de démonstration.
+## Données et confidentialité
 
-## Dépannage
+L'intégration garde dans `/data/kaleidescape.json` les lecteurs connus
+(numéro de série, adresse, port, modèle, nom, nombre de zones de film) et
+l'heure de la dernière lecture de chaque adresse. Rien de ce que vous
+regardez n'y est écrit. Rien ne sort de votre réseau local.
 
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+## Limites connues
+
+- Pas encore d'événements en temps réel (lecture par intervalle seulement).
+- Pas de jaquette, de synopsis ni de réglage du volume (le lecteur ne pilote
+  pas le volume).
+- Un lecteur à plusieurs zones est vu comme un seul appareil (zone
+  principale).
+- Jamais testé avec un vrai appareil : les réponses réelles peuvent
+  différer.

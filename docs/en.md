@@ -1,61 +1,106 @@
-# Demo Devices Template
+# Kaleidescape for Gladys
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Control your **Kaleidescape** movie players (Strato, Compact Terra Prevue,
+Alto, Cinema One, M-Class) from Gladys, locally, without any cloud: power
+on, standby, play, pause, stop, remote keys, play status, title, chapter,
+movie location and video format.
+
+> **Important.** This integration was never tested with a real device: it
+> was written from the `pykaleidescape` library (the one of Home Assistant)
+> and tested against a fake player only. Your feedback is welcome.
+> Unofficial integration, not affiliated with Kaleidescape.
+
+## Installation
+
+1. Give the player a **fixed IP address** in your router (reserved DHCP
+   lease).
+2. In Gladys, install the **Kaleidescape** integration, open its
+   configuration and type the IP addresses of the players, separated by
+   commas (for example `192.168.1.60`; port 10000 by default, another one as
+   `192.168.1.60:10001`).
+3. The players appear in the **Discovery** tab: create them.
+
+The control protocol has no password: nothing else to type. A server
+without a movie zone (Terra, 1U, 3U) is not offered.
 
 ## What you get
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+| Feature        | Gladys type              | Note                                             |
+| -------------- | ------------------------ | ------------------------------------------------ |
+| Power          | binary state (read only) | 1 on, 0 standby or not reachable                 |
+| Power status   | text (read only)         | On, Standby, Not reachable                       |
+| Power on       | button                   | sent from standby only                           |
+| Standby        | button                   | sent when on only; never blocked                 |
+| Play           | button                   | sent when on only                                |
+| Pause, Stop    | buttons                  | sent only when a movie plays; never blocked      |
+| Remote key     | dropdown                 | arrows, OK, Back, menu, next / previous chapter… |
+| Playing        | binary state (read only) | 1 while playing (or scanning)                    |
+| Play status    | text (read only)         | Idle, Paused, Playing, Fast forward, Rewind      |
+| Title          | text (read only)         | the title playing, "No title" when nothing plays |
+| Chapter        | number (read only)       | 0 when nothing plays                             |
+| Movie location | text (read only)         | None, Content, Intermission, Credits, Disc menu  |
+| Video mode     | text (read only)         | for example `3840x2160p24 16:9`                  |
+| Dynamic range  | text (read only)         | SDR, HDR, HDR10 (PQ), Unknown                    |
 
-## Configuration
+On purpose, no **switch**: an "everything off" or "everything on" of a voice
+assistant or a scene never reaches your player. Use the buttons in your
+scenes. Example: dim the lights when "Playing" turns 1, light them again
+when "Movie location" becomes "Credits".
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-   The **refresh interval** sets how often the weather station and the
-   plug's power are read: every 5 minutes by default, every minute at most.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+## Commands
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+The state of the player (its serial number, power and play status) is read
+again just before every command. When another player answers at the
+address, nothing is sent and the address is forgotten; an unreadable serial
+number does not count as another player.
 
-## Actions
+- **Power on** is sent from standby only; **Play** and the **remote keys**
+  only when the player is on (otherwise: refused, nothing sent). These
+  commands go one at a time.
+- **Standby**, **Pause** and **Stop** are protective: they never wait in the
+  queue, are never refused because the state could not be read (they are
+  sent anyway), and they cancel the Power on, Play or remote key commands
+  still waiting ("Cancelled by …, nothing sent").
+- A command is answered as done only when the state read afterwards is the
+  one asked (power, playing, paused, stopped); a remote key, when the player
+  accepts it. Otherwise: "Sent, without confirmation from the player". A
+  command that could not leave says "nothing sent", a refusal of the player
+  "refused by the player".
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+Every command is answered within 4 seconds (Gladys waits 5 seconds); it
+never leaves after its deadline.
 
-## Scenes
+## Configuration button
 
-The integration adds its own cards to the scene editor (Gladys 5.1 or
-later), under the **Integrations** category:
+- **Check the players**: tells the known state of each player and each
+  typed address, with the age of the last read. It reads a player again only
+  when its interval has passed.
 
-- **Motion detected** (trigger) — starts the scene when a demo motion sensor
-  sees something move. Optionally pick the sensor and what moved (person,
-  animal); left empty, any detection matches. The following actions can
-  read what moved with `{{triggerEvent.data.target}}`.
-- **Identify a device** (action) — makes the chosen device signal itself.
-  It returns whether the device could signal itself, so the following
-  actions can depend on it.
+## Refresh, status and limits
 
-## Dashboard
+- The state of each player is read every 15 seconds by default (10 to 300),
+  in one short connection. Never more often: neither the reconnection to
+  Gladys, nor a configuration save, nor the button, nor the creation of the
+  device, nor a restart reads sooner (the time of the last read is kept in
+  the data folder).
+- An address where no player is identified yet is read every minute at
+  most.
+- A player that does not answer shows power 0 and "Not reachable", and is
+  named in the status of the integration.
+- The title, chapter and video format are read at each refresh: a scene
+  reacts with that delay (no real-time events yet).
 
-Add the **Demo status** widget to a dashboard: it shows the live
-temperature of the weather station and the power of the office plug, the
-connection the plug currently uses (orange when degraded) and the observed
-location. Its **Identify the light** button makes the demo light signal
-itself.
+## Data and privacy
 
-## Troubleshooting
+The integration keeps in `/data/kaleidescape.json` the known players
+(serial number, address, port, model, name, number of movie zones) and the
+time of the last read of each address. Nothing of what you watch is written
+there. Nothing leaves your local network.
 
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+## Known limits
+
+- No real-time events yet (reads at each interval only).
+- No cover art, synopsis nor volume control (the player does not drive the
+  volume).
+- A player with several zones is seen as one device (main zone).
+- Never tested with a real device: real answers may differ.

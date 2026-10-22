@@ -1,177 +1,71 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Kaleidescape",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Kaleidescape movie players on the local network: power, play, pause, stop, title, video format.",
+    "fr": "Lecteurs de films Kaleidescape en local : marche, lecture, pause, arrêt, titre, format vidéo."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-kaleidescape:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-kaleidescape/main/cover.png",
+  "categories": ["multimedia"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your Kaleidescape players, on your local network",
+        "fr": "Vos lecteurs Kaleidescape, sur votre réseau local"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Power on, standby, play, pause, stop, remote keys, play status, title, chapter, movie location (credits, intermission) and video format of each Kaleidescape movie player (Strato, Compact Terra Prevue, Alto, Cinema One, M-Class), through the control protocol published by Kaleidescape (TCP port 10000), without any cloud. Give each player a fixed IP address in your router and type it below; the players then appear in the Discovery tab. Every command is a button, never a switch: an \"everything off\" never reaches a player. Never tested with a real device. Unofficial integration, not affiliated with Kaleidescape.",
+        "fr": "Allumage, veille, lecture, pause, arrêt, touches de télécommande, état de lecture, titre, chapitre, position dans le film (générique, entracte) et format vidéo de chaque lecteur de films Kaleidescape (Strato, Compact Terra Prevue, Alto, Cinema One, M-Class), par le protocole de contrôle publié par Kaleidescape (port TCP 10000), sans aucun cloud. Donnez à chaque lecteur une adresse IP fixe dans votre box et saisissez-la ci-dessous ; les lecteurs apparaissent alors dans l'onglet Découverte. Chaque commande est un bouton, jamais un interrupteur : un « tout éteindre » n'atteint jamais un lecteur. Jamais testé avec un vrai appareil. Intégration non officielle, sans lien avec Kaleidescape."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-kaleidescape/blob/main/docs/fr.md",
+          "label": { "en": "Guide (French)", "fr": "Guide (français)" }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-kaleidescape/blob/main/docs/en.md",
+          "label": { "en": "Guide (English)", "fr": "Guide (anglais)" }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
+      "key": "addresses",
+      "type": "string",
+      "label": { "en": "IP addresses of the players", "fr": "Adresses IP des lecteurs" },
       "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+        "en": "Separated by commas, for example 192.168.1.60, 192.168.1.61. Port 10000 by default (another one: 192.168.1.60:10001).",
+        "fr": "Séparées par des virgules, par exemple 192.168.1.60, 192.168.1.61. Port 10000 par défaut (un autre : 192.168.1.60:10001)."
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
-    },
-    {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
-      },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
-    },
-    {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
+      "placeholder": { "en": "192.168.1.60", "fr": "192.168.1.60" },
       "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
+      "default": ""
     },
     {
-      "key": "poll_frequency",
+      "key": "poll_interval",
       "type": "number",
       "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "How often the state of each player is read, in seconds (10 to 300).",
+        "fr": "Fréquence de lecture de l'état de chaque lecteur, en secondes (10 à 300)."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": 15,
+      "min": 10,
+      "max": 300
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
+      "key": "check_players",
+      "label": { "en": "Check the players", "fr": "Vérifier les lecteurs" },
       "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
-      },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
     }
   ]
 }
