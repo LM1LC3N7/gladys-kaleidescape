@@ -74,6 +74,20 @@ export const TIMINGS = Object.freeze({
   infoRefresh: 60 * 60_000,
   /** The time of the last read of each address goes to /data at most this often. */
   attemptPersistEvery: 60_000,
+  /** getDevices failed: tried again after this, doubled up to `createdRetryMax`. */
+  createdRetry: 30_000,
+  createdRetryMax: 5 * 60_000,
+  /** The last read of an address removed from the configuration is kept this long (max interval + 1 min). */
+  retiredKeep: 6 * 60_000,
+  /**
+   * A command line that left holds a guard until the state it asks is read
+   * back, or this long at most: LEAVE_STANDBY / ENTER_STANDBY (a player
+   * may take a while to wake or sleep), PLAY / PAUSE / STOP.
+   */
+  powerGuard: 60_000,
+  playGuard: 20_000,
+  /** Waking commands waiting per player, at most (more: refused at once, nothing sent). */
+  queueLength: 4,
   /** Writes to /data are grouped. */
   persistDelay: 1_000,
 });

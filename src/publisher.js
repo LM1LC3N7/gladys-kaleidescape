@@ -84,10 +84,17 @@ export class StatePublisher {
     // At most 100 states per request (the SDK refuses more).
     for (let start = 0; start < batch.length; start += 100) {
       const part = batch.slice(start, start + 100);
+      // Remembered before the request (as the SDK's publishChangedStates): a
+      // forget() while it is in flight is never undone by its success.
+      part.forEach((s) => this.published.set(s.device_feature_external_id, valueOf(s)));
       try {
         await this.gladys.publishStates(part);
-        part.forEach((s) => this.published.set(s.device_feature_external_id, valueOf(s)));
       } catch (err) {
+        for (const s of part) {
+          if (this.published.get(s.device_feature_external_id) === valueOf(s)) {
+            this.published.delete(s.device_feature_external_id);
+          }
+        }
         this.logger.warn(`States not published: ${err.message}`);
       }
     }

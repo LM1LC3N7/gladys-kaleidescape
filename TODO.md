@@ -141,3 +141,30 @@ up to date at the end of every milestone.
 - No network discovery: Kaleidescape players are found by Home Assistant
   through SSDP/UPnP in its own integration flow, not in pykaleidescape; the
   addresses are typed.
+- (Review 1, 2026-10-22) Fixes:
+  - B1 / M6: a guard per player, set in `beforeWrite` when a confirmed
+    command line leaves (`{ kind, expect, until }`), lifted only by a value
+    read back equal to the one asked (any read or command read back), or
+    after 60 s (LEAVE_STANDBY, ENTER_STANDBY) / 20 s (PLAY, PAUSE, STOP).
+    While a waking line is guarded, Standby / Pause / Stop never take the
+    "already done" shortcut (the line goes); while a protective line is
+    guarded, Power on / Play never take "already on / playing".
+  - I1: an answer is taken only with its expected name (`ANSWERS` for a
+    GET\_, none for a command acknowledgement); an error status is still an
+    answer. Another name on the same sequence is dropped.
+  - I2: a protective command of the same key already running for the
+    player is joined (same answer, never delayed, no session more); the
+    waking queue holds 4 commands, more are refused at once ("Player busy,
+    nothing sent").
+  - M1: Play is "already done" only during a plain playback (a scan or
+    rewind gets PLAY). M2: a link removed from the configuration is kept
+    aside with its last read (and a read in flight), its attempt time kept
+    6 minutes. M3: the publisher remembers a value before the request,
+    forgets it on failure. M4: a failing getDevices is tried again after
+    30 s, doubled up to 5 minutes; its return syncs the links and the
+    states. M5: the second (blind) session of a protective command reads
+    `DEVICE_INFO` again (softly). M7: a full player table evicts a player
+    never created (one without address first). M8: `stop()` always writes
+    `/data`; the partial line goes to one fixed 2 KB buffer. The isolated
+    Node 22 failure of the review was not reproduced (4 runs Node 22, 3
+    runs Node 24, all green).

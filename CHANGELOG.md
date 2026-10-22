@@ -28,10 +28,23 @@ the notes of the version's GitHub Release.
   after a reconnection, a configuration save, the check button or a restart;
   "Check the players" button.
 
+### Fixed
+
+- Standby, Pause or Stop pressed right after a Power on or Play that the
+  player had not applied yet is now sent, never answered "already done";
+  the same the other way round.
+- Play during a fast forward or rewind is sent.
+- Pressing the same Standby, Pause or Stop many times joins one command;
+  at most 4 commands wait per player, the next ones are refused at once.
+- An address removed then typed again is not read sooner than its interval;
+  a failing Gladys device list is asked again spaced, and the players follow
+  its return; a full player list makes room for a new player.
+
 ### Security
 
 - Answers bounded (2 KB per line, 256 KB per session, 32 fields of 512
-  characters) and parsed linearly; values mapped through tables without
+  characters) and parsed linearly; an answer is taken only with its
+  expected name and sequence number; values mapped through tables without
   prototype; only serial numbers are keys in `/data`, nothing of what plays
   is stored.
 

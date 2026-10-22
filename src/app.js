@@ -38,7 +38,7 @@ import {
   parseText,
   parseVideoMode,
 } from './kaleidescape/protocol.js';
-import { buildDevice, deviceName, featureKey, isPlaying, stateList } from './model.js';
+import { buildDevice, deviceName, featureKey, stateList } from './model.js';
 import { StatePublisher } from './publisher.js';
 import { FileStore, emptyData } from './store.js';
 
@@ -103,6 +103,15 @@ export class KaleidescapeApp {
     /** serials of the devices created in Gladys */
     this.created = new Set();
     this.createdStale = false;
+    /** after a failed getDevices: the next try (spaced, doubled up to 5 minutes) */
+    this.createdRetryAt = -Infinity;
+    this.createdRetryDelay = 0;
+    /** addressKey -> a link removed from the configuration (kept: its last read and a read in flight) */
+    this.retiredLinks = new Map();
+    /** serial -> { kind: 'waking' | 'protective', expect(state), until }: the last command line that left */
+    this.guards = new Map();
+    /** `${serial}:${key}` -> the protective command running (joined by the same key) */
+    this.protectiveRuns = new Map();
     /** serial -> { running, items }: the waking commands, one at a time */
     this.queues = new Map();
     /** serial -> bumped by every protective command: a waking command sees it before its line leaves */
@@ -184,9 +193,9 @@ export class KaleidescapeApp {
     if (this.persistTimer) {
       this.timers.clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
-      return this.store.save(this.data).catch(() => {});
     }
-    return Promise.resolve();
+    // Always written: the attempt times held in memory (less than a minute) too.
+    return this.data ? this.store.save(this.data).catch(() => {}) : Promise.resolve();
   }
 
   persist() {
@@ -265,8 +274,21 @@ export class KaleidescapeApp {
     let changed = false;
     if (!player) {
       if (Object.keys(table).length >= LIMITS.players) {
-        this.warnOnce('players', `More than ${LIMITS.players} players: the next ones are ignored`);
-        return undefined;
+        // Full: a player never created in Gladys makes room, one without
+        // an address first (replaced, swapped, a test bench).
+        const spare =
+          this.players.find((p) => !this.created.has(p.serial) && !p.host) ??
+          this.players.find((p) => !this.created.has(p.serial));
+        if (!spare) {
+          this.warnOnce(
+            'players',
+            `More than ${LIMITS.players} players: the next ones are ignored`,
+          );
+          return undefined;
+        }
+        delete table[spare.serial];
+        this.readings.delete(spare.serial);
+        this.logger.info(`${deviceName(spare)} forgotten to make room`);
       }
       player = { serial, host: '', port: link.port, movieZones: info.zones?.movie ?? 1 };
       table[serial] = player;
@@ -322,16 +344,24 @@ export class KaleidescapeApp {
 
   /**
    * The devices created in Gladys. When `getDevices` fails, the list the SDK
-   * keeps (`gladys.devices`) is used, and the call is made again at every
-   * tick until it works.
+   * keeps (`gladys.devices`) is used, and the call is made again later
+   * (30 s, doubled up to 5 minutes); once it works again, the addresses read
+   * and the states follow the list.
    */
   async refreshCreated() {
     let list;
+    const wasStale = this.createdStale;
     try {
       list = await this.gladys.getDevices();
       this.createdStale = false;
+      this.createdRetryDelay = 0;
     } catch (err) {
       this.createdStale = true;
+      this.createdRetryDelay = Math.min(
+        this.timings.createdRetryMax,
+        Math.max(this.timings.createdRetry, this.createdRetryDelay * 2),
+      );
+      this.createdRetryAt = this.now() + this.createdRetryDelay;
       if (!Array.isArray(this.gladys.devices)) {
         throw err;
       }
@@ -346,6 +376,10 @@ export class KaleidescapeApp {
         .map((d) => byExternalId.get(d?.external_id))
         .filter(Boolean),
     );
+    if (wasStale && !this.createdStale) {
+      this.syncLinks();
+      await this.publishAllStates();
+    }
   }
 
   // --- Reads -------------------------------------------------------------------------
@@ -367,18 +401,37 @@ export class KaleidescapeApp {
         wanted.set(addressKey(player), this.addressOf(player));
       }
     }
-    for (const key of [...this.links.keys()]) {
+    for (const [key, link] of [...this.links]) {
       if (!wanted.has(key)) {
+        // Kept aside: typed again, it goes on from its last read (and a
+        // read still in flight is joined, never doubled).
         this.links.delete(key);
+        this.retiredLinks.set(key, link);
       }
     }
-    for (const key of Object.keys(this.data.attempts)) {
-      if (!wanted.has(key)) {
+    // The attempt times of the addresses no longer read are kept until no
+    // interval could still be running (5 minutes + 1 minute).
+    for (const [key, at] of Object.entries(this.data.attempts)) {
+      if (!wanted.has(key) && this.now() - at > this.timings.retiredKeep) {
         delete this.data.attempts[key];
+      }
+    }
+    for (const [key, link] of [...this.retiredLinks]) {
+      if (
+        this.retiredLinks.size > LIMITS.addresses * 2 ||
+        (!link.reading && this.now() - link.lastAttempt > this.timings.retiredKeep)
+      ) {
+        this.retiredLinks.delete(key);
       }
     }
     for (const [key, address] of wanted) {
       if (this.links.has(key)) {
+        continue;
+      }
+      const retired = this.retiredLinks.get(key);
+      if (retired && retired.host === address.host && retired.port === address.port) {
+        this.retiredLinks.delete(key);
+        this.links.set(key, retired);
         continue;
       }
       const saved = this.data.attempts[key];
@@ -411,7 +464,9 @@ export class KaleidescapeApp {
       return Promise.resolve();
     }
     return Promise.resolve()
-      .then(() => (this.createdStale ? this.refreshCreated() : undefined))
+      .then(() =>
+        this.createdStale && this.now() >= this.createdRetryAt ? this.refreshCreated() : undefined,
+      )
       .then(() =>
         Promise.all([...this.links.values()].filter((l) => this.isDue(l)).map((l) => this.read(l))),
       )
@@ -512,6 +567,7 @@ export class KaleidescapeApp {
       if (player) {
         this.probeErrors.delete(link.key);
         this.readings.set(player.serial, result.reading);
+        this.liftGuard(player, result.reading);
       }
     }
     if (player) {
@@ -611,7 +667,41 @@ export class KaleidescapeApp {
       }
     }
     this.readings.set(player.serial, reading);
+    this.liftGuard(player, reading);
     this.publishStates(player).catch(() => {});
+  }
+
+  // --- Guards ------------------------------------------------------------------------
+
+  /**
+   * The last command line that left for a player, until the state it asks is
+   * read back (or its bounded expiry): while a waking line (LEAVE_STANDBY,
+   * PLAY) may still be applied, a Standby, Pause or Stop never takes the
+   * "already done" shortcut, and the other way round.
+   */
+  setGuard(player, kind, expect, duration) {
+    this.guards.set(player.serial, { kind, expect, until: this.now() + duration });
+  }
+
+  /** True when a line of the other kind may still be applied. */
+  guardAgainst(player, kind) {
+    const guard = this.guards.get(player.serial);
+    if (!guard) {
+      return false;
+    }
+    if (this.now() > guard.until) {
+      this.guards.delete(player.serial);
+      return false;
+    }
+    return guard.kind !== kind;
+  }
+
+  /** A value read back equal to the one asked lifts the guard. */
+  liftGuard(player, reading) {
+    const guard = this.guards.get(player.serial);
+    if (guard && reading?.power && guard.expect(reading)) {
+      this.guards.delete(player.serial);
+    }
   }
 
   // --- Sessions ------------------------------------------------------------------------
@@ -663,6 +753,14 @@ export class KaleidescapeApp {
     if (!queue) {
       queue = { running: false, items: [] };
       this.queues.set(serial, queue);
+    }
+    if (queue.items.length >= this.timings.queueLength) {
+      return Promise.reject(
+        new KaleidescapeError(
+          ERROR_KINDS.BUDGET,
+          `Player busy (${queue.items.length} commands waiting), ${NOTHING_SENT}`,
+        ),
+      );
     }
     return new Promise((resolve, reject) => {
       queue.items.push({ task, resolve, reject });
@@ -716,11 +814,27 @@ export class KaleidescapeApp {
     const started = this.now();
     // Set just before a command line leaves: from then on it may have reached
     // the player, whatever happens next.
-    const context = { mayHaveSent: false, late: false };
+    let context = { mayHaveSent: false, late: false };
     let run;
     if (Object.hasOwn(PROTECTIVE, key)) {
       this.cancelWaking(player, key);
-      run = this.protective(player, key, request, started, context);
+      // The same protective command already running for this player is
+      // joined (same answer): never delayed, never a session more.
+      const joinKey = `${player.serial}:${key}`;
+      const running = this.protectiveRuns.get(joinKey);
+      if (running) {
+        ({ run, context } = running);
+      } else {
+        run = this.protective(player, key, request, started, context);
+        const entry = { run, context };
+        this.protectiveRuns.set(joinKey, entry);
+        const clear = () => {
+          if (this.protectiveRuns.get(joinKey) === entry) {
+            this.protectiveRuns.delete(joinKey);
+          }
+        };
+        run.then(clear, clear);
+      }
     } else {
       const epoch = this.epochOf(player);
       run = this.enqueue(player.serial, () =>
@@ -762,18 +876,7 @@ export class KaleidescapeApp {
    * forgotten. An unreadable serial number is no other player.
    */
   async readBefore(session, player, until) {
-    const info = await this.soft(() => session.request(REQUESTS.DEVICE_INFO, { until }));
-    const serial = parseSerial(info?.fields);
-    if (serial && serial !== player.serial) {
-      this.addressLost(player);
-      this.updateStatus().catch(() => {});
-      const err = new KaleidescapeError(
-        ERROR_KINDS.PROTOCOL,
-        `${deviceName(player)}: another player answers at its address, ${NOTHING_SENT}`,
-      );
-      err.lost = true;
-      throw err;
-    }
+    await this.checkIdentity(session, player, until);
     const power = parsePower((await session.request(REQUESTS.POWER_STATE, { until })).fields);
     if (!power) {
       throw new KaleidescapeError(ERROR_KINDS.PROTOCOL, 'Unknown power state');
@@ -787,13 +890,29 @@ export class KaleidescapeApp {
     return state;
   }
 
+  /** Only a valid, different serial number is another player: nothing sent, address forgotten. */
+  async checkIdentity(session, player, until) {
+    const info = await this.soft(() => session.request(REQUESTS.DEVICE_INFO, { until }));
+    const serial = parseSerial(info?.fields);
+    if (serial && serial !== player.serial) {
+      this.addressLost(player);
+      this.updateStatus().catch(() => {});
+      const err = new KaleidescapeError(
+        ERROR_KINDS.PROTOCOL,
+        `${deviceName(player)}: another player answers at its address, ${NOTHING_SENT}`,
+      );
+      err.lost = true;
+      throw err;
+    }
+  }
+
   /**
    * Sends `request`, only before its deadline and while no protective command
    * came (`epoch`), then reads the state back until `confirmed(state)` or the
    * deadline: never answered as done without a value read back equal to the
    * one asked ("sent, without confirmation" otherwise).
    */
-  async sendAndConfirm(session, player, request, deadline, context, { epoch, confirmed }) {
+  async sendAndConfirm(session, player, request, deadline, context, { epoch, confirmed, kind }) {
     await session.request(request, {
       until: deadline,
       command: true,
@@ -811,6 +930,17 @@ export class KaleidescapeApp {
           );
         }
         context.mayHaveSent = true;
+        if (confirmed) {
+          // From now on the line may be applied, even late: guarded until
+          // its state is read back or the guard expires.
+          const power = request === REQUESTS.LEAVE_STANDBY || request === REQUESTS.ENTER_STANDBY;
+          this.setGuard(
+            player,
+            kind,
+            confirmed,
+            power ? this.timings.powerGuard : this.timings.playGuard,
+          );
+        }
       },
     });
     if (!confirmed) {
@@ -866,9 +996,16 @@ export class KaleidescapeApp {
       }
       this.noteState(player, state);
       const send = (confirmed) =>
-        this.sendAndConfirm(session, player, request, deadline, context, { epoch, confirmed });
+        this.sendAndConfirm(session, player, request, deadline, context, {
+          epoch,
+          confirmed,
+          kind: 'waking',
+        });
+      // A Standby, Pause or Stop that left may not be applied yet: never
+      // "already done" then, the line goes.
+      const guarded = this.guardAgainst(player, 'waking');
       if (key === FEATURES.POWER_ON) {
-        if (state.power === POWER.ON) {
+        if (state.power === POWER.ON && !guarded) {
           return undefined;
         }
         return send((s) => s.power === POWER.ON);
@@ -880,7 +1017,8 @@ export class KaleidescapeApp {
         );
       }
       if (key === FEATURES.PLAY) {
-        if (isPlaying(state.play?.status)) {
+        // Only a plain playback is "already playing": a scan or rewind gets PLAY.
+        if (state.play?.status === PLAY.PLAYING && !guarded) {
           return undefined;
         }
         return send((s) => s.power === POWER.ON && s.play?.status === PLAY.PLAYING);
@@ -927,7 +1065,9 @@ export class KaleidescapeApp {
         }
         if (state) {
           this.noteState(player, state);
-          if (done(state)) {
+          // A waking line that left may not be applied yet: never "already
+          // done" then, the line goes.
+          if (done(state) && !this.guardAgainst(player, 'protective')) {
             return;
           }
         }
@@ -935,7 +1075,10 @@ export class KaleidescapeApp {
           blind = true;
           return;
         }
-        await this.sendAndConfirm(session, player, request, deadline, context, { confirmed });
+        await this.sendAndConfirm(session, player, request, deadline, context, {
+          confirmed,
+          kind: 'protective',
+        });
       });
     } catch (err) {
       if (err.lost || err.sent || context.mayHaveSent || err.kind === ERROR_KINDS.REFUSED) {
@@ -948,9 +1091,28 @@ export class KaleidescapeApp {
     }
     if (blind) {
       this.logger.info(`${deviceName(player)}: ${key} sent without a state read`);
-      await this.withSession(address, deadline, (session) =>
-        this.sendAndConfirm(session, player, request, deadline, context, { confirmed }),
-      );
+      await this.withSession(address, deadline, async (session) => {
+        // The identity again (soft): a valid, different serial number sends
+        // nothing; an unreadable one does not stop the protective line.
+        await this.checkIdentity(
+          session,
+          player,
+          Math.min(deadline, this.now() + this.timings.preRead),
+        );
+        if (session.failure) {
+          // DEVICE_INFO broke this one too: the line goes in a last session.
+          return this.withSession(address, deadline, (last) =>
+            this.sendAndConfirm(last, player, request, deadline, context, {
+              confirmed,
+              kind: 'protective',
+            }),
+          );
+        }
+        return this.sendAndConfirm(session, player, request, deadline, context, {
+          confirmed,
+          kind: 'protective',
+        });
+      });
     }
   }
 

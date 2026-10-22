@@ -11,7 +11,7 @@
 // -----------------------------------------------------------------------------
 
 import net from 'node:net';
-import { LOCAL_CPDID, STATUS, parseLine, requestLine } from './protocol.js';
+import { ANSWERS, LOCAL_CPDID, STATUS, parseLine, requestLine } from './protocol.js';
 
 export const ERROR_KINDS = Object.freeze({
   /** Nothing connected: refused, no route, no answer to the TCP connection. */
@@ -48,7 +48,7 @@ export class Session {
     this.readTimeout = readTimeout;
     this.deadline = deadline;
     this.now = now;
-    this.chunks = [];
+    this.partial = Buffer.alloc(MAX_LINE);
     this.buffered = 0;
     this.total = 0;
     this.pending = undefined;
@@ -72,7 +72,8 @@ export class Session {
       this.fail(new KaleidescapeError(ERROR_KINDS.PROTOCOL, 'Too much data from the player'));
       return;
     }
-    // Split on line feeds as the bytes come: each chunk is scanned once.
+    // Split on line feeds as the bytes come: each chunk is scanned once; the
+    // start of a line cut between chunks goes to one fixed 2 KB buffer.
     let start = 0;
     let index;
     while ((index = chunk.indexOf(0x0a, start)) !== -1) {
@@ -81,13 +82,15 @@ export class Session {
         this.fail(new KaleidescapeError(ERROR_KINDS.PROTOCOL, 'Line too long from the player'));
         return;
       }
-      const line =
-        this.chunks.length === 0
-          ? part
-          : Buffer.concat([...this.chunks, part], this.buffered + part.length);
-      this.chunks = [];
-      this.buffered = 0;
-      this.onLine(line.toString('latin1').replace(/\r$/, ''));
+      let text;
+      if (this.buffered === 0) {
+        text = part.toString('latin1');
+      } else {
+        part.copy(this.partial, this.buffered);
+        text = this.partial.toString('latin1', 0, this.buffered + part.length);
+        this.buffered = 0;
+      }
+      this.onLine(text.replace(/\r$/, ''));
       if (this.closed) {
         return;
       }
@@ -99,7 +102,7 @@ export class Session {
         this.fail(new KaleidescapeError(ERROR_KINDS.PROTOCOL, 'Line too long from the player'));
         return;
       }
-      this.chunks.push(Buffer.from(rest));
+      rest.copy(this.partial, this.buffered);
       this.buffered += rest.length;
     }
   }
@@ -110,8 +113,15 @@ export class Session {
       return;
     }
     const message = parseLine(text);
-    // Events, other devices, late answers to an earlier request: dropped.
-    if (!message || message.seq !== pending.seq || message.deviceId !== LOCAL_CPDID) {
+    // Events, other devices, late answers to an earlier request, and a line
+    // of the right sequence but another name (a forged or shifted answer):
+    // dropped. An error status carries its error text as name.
+    if (
+      !message ||
+      message.seq !== pending.seq ||
+      message.deviceId !== LOCAL_CPDID ||
+      (message.status === STATUS.SUCCESS && message.name !== pending.expect)
+    ) {
       return;
     }
     this.pending = undefined;
@@ -172,7 +182,10 @@ export class Session {
         // session is never reused.
         this.fail(new KaleidescapeError(ERROR_KINDS.TIMEOUT, `No answer to ${name} in time`));
       }, timeout);
-      this.pending = { seq, resolve, reject, timer };
+      // A GET_ request is answered by its own name, a command by an
+      // acknowledgement without name.
+      const expect = Object.hasOwn(ANSWERS, name) ? ANSWERS[name] : '';
+      this.pending = { seq, expect, resolve, reject, timer };
     });
     try {
       this.socket.write(requestLine(seq, name));
