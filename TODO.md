@@ -180,3 +180,9 @@ up to date at the end of every milestone.
   line. A line sent under the opposite guard from the target state is done
   only after a move away was seen, and does not replace that guard. M7: no
   eviction while `getDevices` fails (`createdStale`).
+- (Approval 2, 2026-10-22) R7: guards are kept per kind (`waking`,
+  `protective`), a line never overwrites the other kind's. A line sent from
+  its target state still sets its guard, flagged `needMove`: any read
+  showing another state marks the move, and only its target seen after it
+  (or the expiry) lifts it. So a PLAY sent while the movie still played
+  keeps Stop from taking "already stopped" until the PLAY is seen applied.

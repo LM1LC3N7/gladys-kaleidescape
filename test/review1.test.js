@@ -307,9 +307,10 @@ test('a line sent under an opposite guard from the target state needs a move to 
   // Still in standby all along: the target read back proves nothing.
   assert.equal(standby.success, false);
   assert.match(standby.error, /Sent, without confirmation/);
-  // The waking guard is kept, never replaced by the Standby's (it is lifted
-  // only once the wake is read back).
-  assert.notEqual(app.guards.get(SERIAL_ID)?.kind, 'protective');
+  // One guard per kind: the Standby's own guard is set, and waits for a
+  // move away from standby before the standby read back lifts it.
+  const slots = app.guards.get(SERIAL_ID);
+  assert.equal(slots?.protective?.needMove, true);
   assert.deepEqual(fake.commands(), ['LEAVE_STANDBY', 'ENTER_STANDBY']);
 });
 
@@ -326,4 +327,25 @@ test('M7: no eviction while the list of the created devices is unknown', async (
   assert.equal(Object.keys(app.data.players).length, 10);
   app.createdStale = false;
   assert.ok(app.remember('0000000ccc01', link, { zones: { movie: 1 } }));
+});
+
+// --- Approval 2 -------------------------------------------------------------------------
+
+test('R7: a PLAY sent from the target still guards: a later Stop is sent', async (t) => {
+  const { gladys, fake, device } = await setup(t, {
+    fakeOptions: { power: '1', play: '2', effectMs: 100 },
+  });
+  const stop1 = press(gladys, device, 'stop');
+  await waitFor(() => fake.received.includes('STOP'), 'STOP sent');
+  // Play while the movie still plays: the PLAY line leaves under the Stop
+  // guard, from its target; the player applies it slowly.
+  fake.effectMs = 1_500;
+  const play = press(gladys, device, 'play');
+  await waitFor(() => fake.received.includes('PLAY'), 'PLAY sent');
+  await waitFor(() => fake.play === '0', 'STOP applied');
+  await press(gladys, device, 'stop');
+  await Promise.all([stop1, play]);
+  await settle(1_800);
+  assert.deepEqual(fake.commands(), ['STOP', 'PLAY', 'STOP']);
+  assert.equal(fake.play, '0', 'stopped in the end');
 });

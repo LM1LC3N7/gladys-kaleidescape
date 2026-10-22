@@ -678,33 +678,60 @@ export class KaleidescapeApp {
   // --- Guards ------------------------------------------------------------------------
 
   /**
-   * The last command line that left for a player, until the state it asks is
-   * read back (or its bounded expiry): while a waking line (LEAVE_STANDBY,
-   * PLAY) may still be applied, a Standby, Pause or Stop never takes the
-   * "already done" shortcut, and the other way round.
+   * The last command line of each kind ('waking', 'protective') that left
+   * for a player, until the state it asks is read back (or its bounded
+   * expiry): while a waking line (LEAVE_STANDBY, PLAY) may still be applied,
+   * a Standby, Pause or Stop never takes the "already done" shortcut, and
+   * the other way round. One slot per kind: a line never overwrites the
+   * guard of the other kind. A line sent while the state already was its
+   * target (`needMove`) is lifted only by the target seen after a move away.
    */
-  setGuard(player, kind, expect, duration) {
-    this.guards.set(player.serial, { kind, expect, until: this.now() + duration });
+  setGuard(player, kind, expect, duration, needMove = false) {
+    const slots = this.guards.get(player.serial) ?? {};
+    slots[kind] = { expect, until: this.now() + duration, needMove, moved: false };
+    this.guards.set(player.serial, slots);
+  }
+
+  dropGuard(player, kind) {
+    const slots = this.guards.get(player.serial);
+    if (slots) {
+      delete slots[kind];
+      if (!slots.waking && !slots.protective) {
+        this.guards.delete(player.serial);
+      }
+    }
   }
 
   /** True when a line of the other kind may still be applied. */
   guardAgainst(player, kind) {
-    const guard = this.guards.get(player.serial);
+    const other = kind === 'waking' ? 'protective' : 'waking';
+    const guard = this.guards.get(player.serial)?.[other];
     if (!guard) {
       return false;
     }
     if (this.now() > guard.until) {
-      this.guards.delete(player.serial);
+      this.dropGuard(player, other);
       return false;
     }
-    return guard.kind !== kind;
+    return true;
   }
 
-  /** A value read back equal to the one asked lifts the guard. */
+  /** A value read back equal to the one asked lifts a guard (after a move, when needed). */
   liftGuard(player, reading) {
-    const guard = this.guards.get(player.serial);
-    if (guard && reading?.power && guard.expect(reading)) {
-      this.guards.delete(player.serial);
+    const slots = this.guards.get(player.serial);
+    if (!slots || !reading?.power) {
+      return;
+    }
+    for (const kind of ['waking', 'protective']) {
+      const guard = slots[kind];
+      if (!guard) {
+        continue;
+      }
+      if (!guard.expect(reading)) {
+        guard.moved = true;
+      } else if (!guard.needMove || guard.moved) {
+        this.dropGuard(player, kind);
+      }
     }
   }
 
@@ -950,15 +977,17 @@ export class KaleidescapeApp {
         if (kind === 'waking') {
           this.wakeLines.set(player.serial, (this.wakeLines.get(player.serial) ?? 0) + 1);
         }
-        if (confirmed && !fromTarget) {
+        if (confirmed) {
           // From now on the line may be applied, even late: guarded until
-          // its state is read back or the guard expires.
+          // its state is read back (after a move away when it left from
+          // the target) or the guard expires. The other kind's guard stays.
           const power = request === REQUESTS.LEAVE_STANDBY || request === REQUESTS.ENTER_STANDBY;
           this.setGuard(
             player,
             kind,
             confirmed,
             power ? this.timings.powerGuard : this.timings.playGuard,
+            fromTarget,
           );
         }
       },
