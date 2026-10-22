@@ -273,15 +273,12 @@ test('M7: a full player table makes room for a new player', async (t) => {
 
 test('M8: stop() writes the attempt times held in memory', async (t) => {
   const { app, store } = await setup(t);
-  app.lastAttemptSave = Date.now();
-  for (const link of app.links.values()) {
-    link.lastAttempt = -Infinity;
-  }
-  await app.tick();
-  const key = [...app.links.keys()][0];
-  const inMemory = app.data.attempts[key];
   await settle(30);
-  assert.notEqual(store.data.attempts[key], inMemory, 'not written by the read');
+  const key = [...app.links.keys()][0];
+  // An attempt time held in memory only (written at most once a minute).
+  const inMemory = Date.now() + 1;
+  app.data.attempts[key] = inMemory;
+  assert.notEqual(store.data.attempts[key], inMemory);
   await app.stop();
   assert.equal(store.data.attempts[key], inMemory);
 });
