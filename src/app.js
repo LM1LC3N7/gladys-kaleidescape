@@ -112,6 +112,8 @@ export class KaleidescapeApp {
     this.guards = new Map();
     /** `${serial}:${key}` -> the protective command running (joined by the same key) */
     this.protectiveRuns = new Map();
+    /** serial -> count of the waking lines that left (Power on, Play, keys) */
+    this.wakeLines = new Map();
     /** serial -> { running, items }: the waking commands, one at a time */
     this.queues = new Map();
     /** serial -> bumped by every protective command: a waking command sees it before its line leaves */
@@ -276,9 +278,11 @@ export class KaleidescapeApp {
       if (Object.keys(table).length >= LIMITS.players) {
         // Full: a player never created in Gladys makes room, one without
         // an address first (replaced, swapped, a test bench).
-        const spare =
-          this.players.find((p) => !this.created.has(p.serial) && !p.host) ??
-          this.players.find((p) => !this.created.has(p.serial));
+        // Never while the list of the created devices is unknown (getDevices failing).
+        const spare = this.createdStale
+          ? undefined
+          : (this.players.find((p) => !this.created.has(p.serial) && !p.host) ??
+            this.players.find((p) => !this.created.has(p.serial)));
         if (!spare) {
           this.warnOnce(
             'players',
@@ -821,12 +825,15 @@ export class KaleidescapeApp {
       // The same protective command already running for this player is
       // joined (same answer): never delayed, never a session more.
       const joinKey = `${player.serial}:${key}`;
+      // Joined only while no waking line left since that run began: after a
+      // PLAY sent meanwhile, this Stop is a new run (and its line goes).
+      const wakeCount = this.wakeLines.get(player.serial) ?? 0;
       const running = this.protectiveRuns.get(joinKey);
-      if (running) {
+      if (running && running.wakeCount === wakeCount) {
         ({ run, context } = running);
       } else {
         run = this.protective(player, key, request, started, context);
-        const entry = { run, context };
+        const entry = { run, context, wakeCount };
         this.protectiveRuns.set(joinKey, entry);
         const clear = () => {
           if (this.protectiveRuns.get(joinKey) === entry) {
@@ -910,9 +917,19 @@ export class KaleidescapeApp {
    * Sends `request`, only before its deadline and while no protective command
    * came (`epoch`), then reads the state back until `confirmed(state)` or the
    * deadline: never answered as done without a value read back equal to the
-   * one asked ("sent, without confirmation" otherwise).
+   * one asked ("sent, without confirmation" otherwise). `fromTarget`: the
+   * line goes under an opposite guard while the state read already equals
+   * the target: done only once another state was seen first, and the
+   * opposite guard is kept (it expires or its own state lifts it).
    */
-  async sendAndConfirm(session, player, request, deadline, context, { epoch, confirmed, kind }) {
+  async sendAndConfirm(
+    session,
+    player,
+    request,
+    deadline,
+    context,
+    { epoch, confirmed, kind, fromTarget = false },
+  ) {
     await session.request(request, {
       until: deadline,
       command: true,
@@ -930,7 +947,10 @@ export class KaleidescapeApp {
           );
         }
         context.mayHaveSent = true;
-        if (confirmed) {
+        if (kind === 'waking') {
+          this.wakeLines.set(player.serial, (this.wakeLines.get(player.serial) ?? 0) + 1);
+        }
+        if (confirmed && !fromTarget) {
           // From now on the line may be applied, even late: guarded until
           // its state is read back or the guard expires.
           const power = request === REQUESTS.LEAVE_STANDBY || request === REQUESTS.ENTER_STANDBY;
@@ -947,6 +967,9 @@ export class KaleidescapeApp {
       // A remote key changes no state: the answer of the player is its confirmation.
       return;
     }
+    // From the target state, the target read back proves nothing until a
+    // move away from it was seen.
+    let moved = !fromTarget;
     while (this.now() + this.timings.confirmStep < deadline - this.timings.writeMargin) {
       await sleep(this.timings.confirmStep);
       let state;
@@ -956,7 +979,9 @@ export class KaleidescapeApp {
         break;
       }
       this.noteState(player, state);
-      if (confirmed(state)) {
+      if (!confirmed(state)) {
+        moved = true;
+      } else if (moved) {
         return;
       }
     }
@@ -1000,6 +1025,7 @@ export class KaleidescapeApp {
           epoch,
           confirmed,
           kind: 'waking',
+          fromTarget: Boolean(confirmed && guarded && confirmed(state)),
         });
       // A Standby, Pause or Stop that left may not be applied yet: never
       // "already done" then, the line goes.
@@ -1078,6 +1104,8 @@ export class KaleidescapeApp {
         await this.sendAndConfirm(session, player, request, deadline, context, {
           confirmed,
           kind: 'protective',
+          // Here only under a waking guard: the target read proves nothing yet.
+          fromTarget: Boolean(state && confirmed(state)),
         });
       });
     } catch (err) {

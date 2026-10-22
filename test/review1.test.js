@@ -282,3 +282,48 @@ test('M8: stop() writes the attempt times held in memory', async (t) => {
   await app.stop();
   assert.equal(store.data.attempts[key], inMemory);
 });
+
+// --- Approval 1 -------------------------------------------------------------------------
+
+test('R5: Stop, Play, Stop: the second Stop is a new run after the PLAY line', async (t) => {
+  const { gladys, fake, device } = await setup(t, {
+    fakeOptions: { power: '1', play: '2', effectMs: 150 },
+  });
+  const stop1 = press(gladys, device, 'stop');
+  await waitFor(() => fake.received.includes('STOP'), 'STOP sent');
+  const play = press(gladys, device, 'play');
+  await waitFor(() => fake.received.includes('PLAY'), 'PLAY sent');
+  const stop2 = press(gladys, device, 'stop');
+  await Promise.all([stop1, play, stop2]);
+  await settle(400);
+  assert.deepEqual(fake.commands(), ['STOP', 'PLAY', 'STOP']);
+  assert.equal(fake.play, '0', 'stopped in the end');
+});
+
+test('a line sent under an opposite guard from the target state needs a move to be done', async (t) => {
+  const { gladys, fake, device, app } = await setup(t, { fakeOptions: { effectMs: 1_200 } });
+  await press(gladys, device, 'power_on');
+  const standby = await press(gladys, device, 'standby');
+  // Still in standby all along: the target read back proves nothing.
+  assert.equal(standby.success, false);
+  assert.match(standby.error, /Sent, without confirmation/);
+  // The waking guard is kept, never replaced by the Standby's (it is lifted
+  // only once the wake is read back).
+  assert.notEqual(app.guards.get(SERIAL_ID)?.kind, 'protective');
+  assert.deepEqual(fake.commands(), ['LEAVE_STANDBY', 'ENTER_STANDBY']);
+});
+
+test('M7: no eviction while the list of the created devices is unknown', async (t) => {
+  const { app } = await setup(t, { create: false });
+  for (let i = 1; i <= 10; i += 1) {
+    const serial = `00000000bb${String(i).padStart(2, '0')}`;
+    app.data.players[serial] = { serial, host: '', port: 10000, movieZones: 1 };
+  }
+  delete app.data.players[SERIAL_ID];
+  app.createdStale = true;
+  const link = [...app.links.values()][0];
+  assert.equal(app.remember('0000000ccc01', link, { zones: { movie: 1 } }), undefined);
+  assert.equal(Object.keys(app.data.players).length, 10);
+  app.createdStale = false;
+  assert.ok(app.remember('0000000ccc01', link, { zones: { movie: 1 } }));
+});

@@ -33,6 +33,12 @@ up to date at the end of every milestone.
     command is "sent, without confirmation" when it takes more than ~3 s);
   - `PLAY` with nothing loaded (status 0 stays: "sent, without
     confirmation" today);
+  - what a player does with ENTER_STANDBY received while waking (or
+    LEAVE_STANDBY while going to standby), and STOP / PAUSE while a PLAY
+    starts: ignored, queued or applied. Today a line sent under the
+    opposite guard while the state already equals its target is "sent,
+    without confirmation" unless a move is seen, and the opposite guard is
+    kept until it expires or its own state is read back;
   - the rendering on the Gladys dashboard (not checked here) of the
     `unknown/integer` chapter and the `text/text` states.
 - [ ] **Milestone 3 — more**: real-time events on a kept connection (the
@@ -168,3 +174,9 @@ up to date at the end of every milestone.
     `/data`; the partial line goes to one fixed 2 KB buffer. The isolated
     Node 22 failure of the review was not reproduced (4 runs Node 22, 3
     runs Node 24, all green).
+- (Approval 1, 2026-10-22) Fixes: R5, a protective command is joined only
+  while no waking line left since that run began (a count of waking lines
+  per player, bumped in their `beforeWrite`), else a new run sends its own
+  line. A line sent under the opposite guard from the target state is done
+  only after a move away was seen, and does not replace that guard. M7: no
+  eviction while `getDevices` fails (`createdStale`).
